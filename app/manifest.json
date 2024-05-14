@@ -16,7 +16,7 @@
             "embeddedSdkVersion": "3.0",
             "vendorUrl": "https://www.axis.com",
             "runMode": "once",
-            "version": "3.0.0"
+            "version": "3.0.1"
         },
         "installation": {
             "postInstallScript": "postinstallscript.sh"
@@ -40,6 +40,11 @@
                 },
                 {
                     "name": "IPCSocket",
+                    "default": "yes",
+                    "type": "bool:no,yes"
+                },
+                {
+                    "name": "DisableLoopback",
                     "default": "yes",
                     "type": "bool:no,yes"
                 },

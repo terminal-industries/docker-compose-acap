@@ -35,6 +35,7 @@
 #include <unistd.h>
 
 #define PARAM_APPLICATION_LOG_LEVEL "ApplicationLogLevel"
+#define DISABLE_LOOPBACK            "DisableLoopback"
 #define PARAM_DOCKERD_LOG_LEVEL     "DockerdLogLevel"
 #define PARAM_IPC_SOCKET            "IPCSocket"
 #define PARAM_SD_CARD_SUPPORT       "SDCardSupport"
@@ -70,6 +71,7 @@ struct settings {
     bool use_tls;
     bool use_tcp_socket;
     bool use_ipc_socket;
+    bool disable_loopback;
 };
 
 struct app_state {
@@ -105,6 +107,7 @@ static pid_t rootlesskit_pid = 0;
 static const char* params_that_restart_dockerd[] = {PARAM_APPLICATION_LOG_LEVEL,
                                                     PARAM_DOCKERD_LOG_LEVEL,
                                                     PARAM_IPC_SOCKET,
+                                                    DISABLE_LOOPBACK,
                                                     PARAM_SD_CARD_SUPPORT,
                                                     PARAM_TCP_SOCKET,
                                                     PARAM_USE_TLS,
@@ -416,6 +419,7 @@ static bool read_settings(struct settings* settings, const struct app_state* app
         return false;
 
     settings->use_ipc_socket = is_parameter_yes(param_handle, PARAM_IPC_SOCKET);
+    
 
     if (!settings->use_ipc_socket && !settings->use_tcp_socket) {
         log_error(
@@ -433,6 +437,7 @@ static bool read_settings(struct settings* settings, const struct app_state* app
     if (!(settings->data_root = prepare_data_root(param_handle, app_state->sd_card_area)))
         return false;
 
+    settings->disable_loopback = is_parameter_yes(param_handle, DISABLE_LOOPBACK);
     return true;
 }
 
@@ -504,6 +509,7 @@ static const char* build_daemon_args(const struct settings* settings, AXParamete
     const bool use_tls = settings->use_tls;
     const bool use_tcp_socket = settings->use_tcp_socket;
     const bool use_ipc_socket = settings->use_ipc_socket;
+    const bool disable_loopback = settings->disable_loopback;
 
     gsize msg_len = 128;
     gchar msg[msg_len];
@@ -521,11 +527,10 @@ static const char* build_daemon_args(const struct settings* settings, AXParamete
     // construct the rootlesskit command
     args_wr += g_snprintf(args_wr,
                           args_end - args_wr,
-                          "%s %s %s %s %s %s %s %s %s",
+                          "%s %s %s %s %s %s %s %s",
                           "rootlesskit",
                           "--subid-source=static",
                           "--net=slirp4netns",
-                          "--disable-host-loopback",
                           "--copy-up=/etc",
                           "--copy-up=/run",
                           "--propagation=rslave",
@@ -533,6 +538,10 @@ static const char* build_daemon_args(const struct settings* settings, AXParamete
                           /* don't use same range as company proxy */
                           "--cidr=10.0.3.0/24");
 
+//  the loopback should only be added to the command arguments if it is set to yes
+    if (!disable_loopback) {
+        args_wr += g_snprintf(args_wr, args_end - args_wr, " %s", "--disable-host-loopback");
+    }
     if (strcmp(log_level, "debug") == 0) {
         args_wr += g_snprintf(args_wr, args_end - args_wr, " %s", "--debug");
     }

@@ -167,6 +167,7 @@ The following settings are available
 | [UseTLS](#use-tls)                   | Boolean | RW     | `yes`,`no`                            |
 | [TCPSocket](#tcp-socket--ipc-socket) | Boolean | RW     | `yes`,`no`                            |
 | [IPCSocket](#tcp-socket--ipc-socket) | Boolean | RW     | `yes`,`no`                            |
+| [DisableLoopback](#disable-loopback) | Boolean | RW     | `yes`,`no`                            |
 | [ApplicationLogLevel](#log-levels)   | Enum    | RW     | `debug`,`info`                        |
 | [DockerdLogLevel](#log-levels)       | Enum    | RW     | `debug`,`info`,`warn`,`error`,`fatal` |
 | [Status](#status-codes)              | String  | R      | See [Status Codes](#status-codes)     |
@@ -181,6 +182,11 @@ an SD card. See [Using an SD card as storage](#using-an-sd-card-as-storage) for 
 To be able to connect remotely to the docker daemon on the device, `TCP Socket` needs to be selected.
 `IPC Socket` needs to be selected for containers running on the device to be able to communicate with
 each other. At least one of the sockets needs to be selected for the application to start dockerd.
+
+#### Disable Loopback
+
+If you have an application which requires access to a service running on the host you will need to remove the 
+--disable-host-loopback by setting  `Disable Loopback` to 'no'. The default is 'yes'.
 
 #### Use TLS
 
