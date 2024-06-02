@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
-ARG DOCKER_IMAGE_VERSION=26.0.0
-ARG DOCKER_COMPOSE_VERSION=v2.25.0
+ARG DOCKER_IMAGE_VERSION=26.1.3
+ARG DOCKER_COMPOSE_VERSION=v2.27.0
 ARG PROCPS_VERSION=v3.3.17
 ARG NSENTER_VERSION=v2.40
 ARG SLIRP4NETNS_VERSION=1.2.3
@@ -90,6 +90,25 @@ EOF
 WORKDIR $EXPORT_DIR
 RUN cp $BUILD_DIR/util-linux/nsenter nsenter
 
+FROM build_image AS pasta_passt
+
+ARG BUILD_DIR=/build
+ARG EXPORT_DIR=/export
+ARG PASTA_VERSION=v1.0.0
+
+WORKDIR $BUILD_DIR
+RUN git clone 'https://passt.top/passt' .
+
+RUN <<EOF
+    . /opt/axis/acapsdk/environment-setup*
+    make pkgs
+    $STRIP pasta passt
+EOF
+
+WORKDIR $EXPORT_DIR
+RUN cp $BUILD_DIR/pasta pasta
+RUN cp $BUILD_DIR/passt passt
+
 FROM sdk_image AS docker_binaries
 
 WORKDIR /download
@@ -149,6 +168,8 @@ COPY --from=docker_binaries \
     /download/rootlesskit-docker-proxy \
     /download/slirp4netns ./
 
+COPY --from=pasta_passt /export/pasta /export/passt ./
+
 ARG BUILD_WITH_SANITIZERS
 
 RUN <<EOF
@@ -164,7 +185,9 @@ RUN <<EOF
         -a slirp4netns \
         -a rootlesskit \
         -a rootlesskit-docker-proxy \
-        -a nsenter
+        -a nsenter \
+        -a pasta \
+        -a passt
 EOF
 
 ENTRYPOINT [ "/opt/axis/acapsdk/sysroots/x86_64-pokysdk-linux/usr/bin/eap-install.sh" ]
