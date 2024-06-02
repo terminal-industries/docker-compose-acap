@@ -10,6 +10,9 @@ struct sd_disk_storage {
     AXStorage* handle;
 };
 
+// Forward declaration
+static bool subscribe(struct sd_disk_storage* storage, const char* storage_id);
+
 static bool event_status_or_log(gchar* storage_id, AXStorageStatusEventId event) {
     GError* error = NULL;
     bool value = ax_storage_get_status(storage_id, event, &error);
@@ -86,11 +89,21 @@ static void subscribe_cb(gchar* storage_id, gpointer storage_void_ptr, GError* e
         log_warning("subscribe_cb error: %s", error->message);
         g_clear_error(&error);
         storage->callback(NULL, storage->user_data);
+        // Retry subscribing
+        if (!subscribe(storage, storage_id)) {
+            log_error("Failed to subscribe to events of %s after retrying.", storage_id);
+        }
+        return;
     }
 
     if (event_status_or_log(storage_id, AX_STORAGE_EXITING_EVENT)) {
         storage->callback(NULL, storage->user_data);
         release(storage);
+        // Retry subscribing
+        if (!subscribe(storage, storage_id)) {
+            log_error("Failed to subscribe to events of %s after retrying.", storage_id);
+        }
+        return;
     }
 
     if (event_status_or_log(storage_id, AX_STORAGE_WRITABLE_EVENT)) {
@@ -98,6 +111,10 @@ static void subscribe_cb(gchar* storage_id, gpointer storage_void_ptr, GError* e
             log_warning("ax_storage_setup_async error: %s", error->message);
             g_clear_error(&error);
             storage->callback(NULL, storage->user_data);
+            // Retry subscribing
+            if (!subscribe(storage, storage_id)) {
+                log_error("Failed to subscribe to events of %s after retrying.", storage_id);
+            }
         }
     }
 }
