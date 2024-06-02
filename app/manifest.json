@@ -16,7 +16,7 @@
             "embeddedSdkVersion": "3.0",
             "vendorUrl": "https://www.axis.com",
             "runMode": "once",
-            "version": "3.0.1"
+            "version": "3.0.2"
         },
         "installation": {
             "postInstallScript": "postinstallscript.sh"
@@ -45,6 +45,11 @@
                 },
                 {
                     "name": "DisableLoopback",
+                    "default": "no",
+                    "type": "bool:no,yes"
+                },
+                {
+                    "name": "PersistState",
                     "default": "yes",
                     "type": "bool:no,yes"
                 },

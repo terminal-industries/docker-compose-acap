@@ -35,7 +35,8 @@
 #include <unistd.h>
 
 #define PARAM_APPLICATION_LOG_LEVEL "ApplicationLogLevel"
-#define DISABLE_LOOPBACK            "DisableLoopback"
+#define PARAM_DISABLE_LOOPBACK            "DisableLoopback"
+#define PARAM_PERSIST_STATE               "PersistState"
 #define PARAM_DOCKERD_LOG_LEVEL     "DockerdLogLevel"
 #define PARAM_IPC_SOCKET            "IPCSocket"
 #define PARAM_SD_CARD_SUPPORT       "SDCardSupport"
@@ -72,6 +73,7 @@ struct settings {
     bool use_tcp_socket;
     bool use_ipc_socket;
     bool disable_loopback;
+    bool persist_state;
 };
 
 struct app_state {
@@ -107,7 +109,8 @@ static pid_t rootlesskit_pid = 0;
 static const char* params_that_restart_dockerd[] = {PARAM_APPLICATION_LOG_LEVEL,
                                                     PARAM_DOCKERD_LOG_LEVEL,
                                                     PARAM_IPC_SOCKET,
-                                                    DISABLE_LOOPBACK,
+                                                    PARAM_DISABLE_LOOPBACK,
+                                                    PARAM_PERSIST_STATE,
                                                     PARAM_SD_CARD_SUPPORT,
                                                     PARAM_TCP_SOCKET,
                                                     PARAM_USE_TLS,
@@ -169,10 +172,10 @@ static bool let_other_apps_use_our_ipc_socket(void) {
     return set_xdg_directory_permisssions(group_read_and_exec_perms);
 }
 
-static bool prevent_others_from_using_our_ipc_socket(void) {
-    const mode_t user_read_and_exec_perms = 0700;
-    return set_xdg_directory_permisssions(user_read_and_exec_perms);
-}
+// static bool prevent_others_from_using_our_ipc_socket(void) {
+//     const mode_t user_read_and_exec_perms = 0700;
+//     return set_xdg_directory_permisssions(user_read_and_exec_perms);
+// }
 
 /**
  * @brief Signals handling
@@ -419,7 +422,8 @@ static bool read_settings(struct settings* settings, const struct app_state* app
         return false;
 
     settings->use_ipc_socket = is_parameter_yes(param_handle, PARAM_IPC_SOCKET);
-    
+    settings->disable_loopback = is_parameter_yes(param_handle, PARAM_DISABLE_LOOPBACK);
+    settings->persist_state = is_parameter_yes(param_handle, PARAM_PERSIST_STATE);
 
     if (!settings->use_ipc_socket && !settings->use_tcp_socket) {
         log_error(
@@ -437,7 +441,6 @@ static bool read_settings(struct settings* settings, const struct app_state* app
     if (!(settings->data_root = prepare_data_root(param_handle, app_state->sd_card_area)))
         return false;
 
-    settings->disable_loopback = is_parameter_yes(param_handle, DISABLE_LOOPBACK);
     return true;
 }
 
@@ -485,6 +488,10 @@ check_child_process_exit_code_and_clean_up(GPid pid, gint status, gpointer app_s
     struct app_state* app_state = app_state_void_ptr;
 
     bool runtime_error = child_process_exited_with_error(status);
+    // Remove the directories
+    remove("/run/docker");
+    remove("/run/containerd");
+    remove("/run/xtables.lock");
     allow_dockerd_to_start(app_state, !runtime_error);
     status_code_t s = runtime_error ? STATUS_DOCKERD_RUNTIME_ERROR : STATUS_DOCKERD_STOPPED;
     set_status_parameter(app_state->param_handle, s);
@@ -494,12 +501,11 @@ check_child_process_exit_code_and_clean_up(GPid pid, gint status, gpointer app_s
 
     remove_docker_pid_file();  // Might have been left behind if dockerd crashed.
 
-    prevent_others_from_using_our_ipc_socket();
+    let_other_apps_use_our_ipc_socket();
 
     main_loop_quit();  // Trigger a restart of dockerd from main()
 }
 
-// Return a command line with space-delimited argument based on the current settings.
 static const char* build_daemon_args(const struct settings* settings, AXParameter* param_handle) {
     static gchar args[1024];  // Pointer to args returned to caller on success.
     const char* args_end = args + sizeof(args);
@@ -510,12 +516,13 @@ static const char* build_daemon_args(const struct settings* settings, AXParamete
     const bool use_tcp_socket = settings->use_tcp_socket;
     const bool use_ipc_socket = settings->use_ipc_socket;
     const bool disable_loopback = settings->disable_loopback;
+    const bool persist_state = settings->persist_state;
 
     gsize msg_len = 128;
     gchar msg[msg_len];
 
     g_autofree char* log_level = get_parameter_value(param_handle, PARAM_DOCKERD_LOG_LEVEL);
-
+    g_autofree char* xdg_runtime_dir = xdg_runtime_directory();
     // get host ip
     char host_buffer[256];
     char* IPbuffer;
@@ -524,6 +531,7 @@ static const char* build_daemon_args(const struct settings* settings, AXParamete
     host_entry = gethostbyname(host_buffer);
     IPbuffer = inet_ntoa(*((struct in_addr*)host_entry->h_addr_list[0]));
 
+    setenv("XTABLES_LOCKFILE", APP_LOCALDATA "/xtables.lock", 1);
     // construct the rootlesskit command
     args_wr += g_snprintf(args_wr,
                           args_end - args_wr,
@@ -534,12 +542,15 @@ static const char* build_daemon_args(const struct settings* settings, AXParamete
                           "--copy-up=/etc",
                           "--copy-up=/run",
                           "--propagation=rslave",
-                          "--port-driver slirp4netns",
+                          "--port-driver=slirp4netns",
                           /* don't use same range as company proxy */
                           "--cidr=10.0.3.0/24");
 
-//  the loopback should only be added to the command arguments if it is set to yes
-    if (!disable_loopback) {
+    if (persist_state) {
+        args_wr += g_snprintf(args_wr, args_end - args_wr, " --state-dir=%s/dockerd-rootless", xdg_runtime_dir);
+    }
+    // the loopback should only be added to the command arguments if it is set to yes
+    if (disable_loopback) {
         args_wr += g_snprintf(args_wr, args_end - args_wr, " %s", "--disable-host-loopback");
     }
     if (strcmp(log_level, "debug") == 0) {
@@ -548,47 +559,47 @@ static const char* build_daemon_args(const struct settings* settings, AXParamete
 
     const uint port = use_tls ? 2376 : 2375;
     args_wr += g_snprintf(args_wr, args_end - args_wr, " -p %s:%d:%d/tcp", IPbuffer, port, port);
-
+   
     // add dockerd command
     args_wr += g_snprintf(args_wr,
                           args_end - args_wr,
-                          " dockerd %s",
-                          "--config-file " APP_LOCALDATA "/" DAEMON_JSON);
+                          " %s",
+                          APP_LOCALDATA "/" ENTRYPOINT);
 
     g_strlcpy(msg, "Starting dockerd", msg_len);
 
-    args_wr += g_snprintf(args_wr, args_end - args_wr, " --log-level=%s", log_level);
+    // args_wr += g_snprintf(args_wr, args_end - args_wr, " --log-level=%s", log_level);
 
-    if (use_ipc_socket) {
-        g_strlcat(msg, " with IPC socket and", msg_len);
-        // The socket should reside in the user directory and have same group as user.
-        // If omitted, dockerd will log a warning about the 'docker' group not being find.
-        // However, rootlesskit maps the user's primary group to the root group, so "--group 0"
-        // means the socket will belong to the user's primary group.
-        g_autofree char* ipc_socket = xdg_runtime_file("docker.sock");
-        args_wr += g_snprintf(args_wr, args_end - args_wr, " --group 0 -H unix://%s", ipc_socket);
-    } else {
-        g_strlcat(msg, " without IPC socket and", msg_len);
-    }
+    // if (use_ipc_socket) {
+    //     g_strlcat(msg, " with IPC socket and", msg_len);
+    //     // The socket should reside in the user directory and have same group as user.
+    //     // If omitted, dockerd will log a warning about the 'docker' group not being find.
+    //     // However, rootlesskit maps the user's primary group to the root group, so "--group 0"
+    //     // means the socket will belong to the user's primary group.
+    //     g_autofree char* ipc_socket = xdg_runtime_file("docker.sock");
+    //     args_wr += g_snprintf(args_wr, args_end - args_wr, " --group 0 -H unix://%s", ipc_socket);
+    // } else {
+    //     g_strlcat(msg, " without IPC socket and", msg_len);
+    // }
 
-    if (use_tcp_socket) {
-        g_strlcat(msg, " with TCP socket", msg_len);
-        g_strlcat(msg, use_tls ? " in TLS mode" : " in unsecured mode", msg_len);
-        const uint port = use_tls ? 2376 : 2375;
-        args_wr += g_snprintf(args_wr, args_end - args_wr, " -H tcp://0.0.0.0:%d", port);
-        const char* tls_arg = use_tls ? "--tlsverify=true" : "--tls=false";
-        args_wr += g_snprintf(args_wr, args_end - args_wr, " %s", tls_arg);
-        if (use_tls)
-            args_wr += g_snprintf(args_wr, args_end - args_wr, " %s", tls_file_dockerd_args());
-    } else {
-        g_strlcat(msg, " without TCP socket", msg_len);
-    }
+    // if (use_tcp_socket) {
+    //     g_strlcat(msg, " with TCP socket", msg_len);
+    //     g_strlcat(msg, use_tls ? " in TLS mode" : " in unsecured mode", msg_len);
+    //     const uint port = use_tls ? 2376 : 2375;
+    //     args_wr += g_snprintf(args_wr, args_end - args_wr, " -H tcp://0.0.0.0:%d", port);
+    //     const char* tls_arg = use_tls ? "--tlsverify=true" : "--tls=false";
+    //     args_wr += g_snprintf(args_wr, args_end - args_wr, " %s", tls_arg);
+    //     if (use_tls)
+    //         args_wr += g_snprintf(args_wr, args_end - args_wr, " %s", tls_file_dockerd_args());
+    // } else {
+    //     g_strlcat(msg, " without TCP socket", msg_len);
+    // }
 
-    g_autofree char* data_root_msg = g_strdup_printf(" using %s as storage.", data_root);
-    g_strlcat(msg, data_root_msg, msg_len);
-    args_wr += g_snprintf(args_wr, args_end - args_wr, " --data-root %s", data_root);
+    // g_autofree char* data_root_msg = g_strdup_printf(" using %s as data-root storage.", data_root);
+    // g_strlcat(msg, data_root_msg, msg_len);
+    // args_wr += g_snprintf(args_wr, args_end - args_wr, " --data-root %s\'", data_root);
 
-    log_info("%s", msg);
+    // log_info("%s", msg);
     return args;
 }
 
@@ -788,9 +799,13 @@ static bool set_env_variables(void) {
         g_strdup_printf("/bin:/usr/bin:%s:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin",
                         APP_DIRECTORY);
     g_autofree char* xdg_runtime_dir = xdg_runtime_directory();
+    g_autofree char* sock =
+        g_strdup_printf("%s/containerd/containerd.sock",
+                        xdg_runtime_dir);
 
     return set_env_variable("PATH", path) && set_env_variable("HOME", APP_DIRECTORY) &&
            set_env_variable("XDG_RUNTIME_DIR", xdg_runtime_dir);
+           set_env_variable("CONTAINERD_ADDRESS", sock);
 }
 
 int main(int argc, char** argv) {
