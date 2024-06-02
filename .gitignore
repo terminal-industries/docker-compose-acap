@@ -7,7 +7,7 @@ docker-init
 docker-proxy
 dockerdwrapperwithcompose
 package.conf.orig
-*.eap
+*.eap*
 *.eap.old
 *.pem
 *.srl
