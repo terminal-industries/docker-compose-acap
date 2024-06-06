@@ -805,7 +805,7 @@ static bool set_env_variables(void) {
 
     return set_env_variable("PATH", path) && set_env_variable("HOME", APP_DIRECTORY) &&
            set_env_variable("XDG_RUNTIME_DIR", xdg_runtime_dir);
-           set_env_variable("CONTAINERD_ADDRESS", sock);
+           set_env_variable("XTABLES_LOCKFILE", APP_LOCALDATA "/xtables.lock");
 }
 
 int main(int argc, char** argv) {

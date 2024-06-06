@@ -49,13 +49,14 @@ fi
 echo "${XTABLES_LOCKFILE} has been created and configured."
 # Create entrypoint.sh
 echo "Creating $ENTRYPOINT_FILE..."
+umask 077
 touch $ENTRYPOINT_FILE
 cat << EOF >"$ENTRYPOINT_FILE"
 #!/bin/sh
 
 PATH="${PWD}:/bin:/usr/bin:%s:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
 
-rm -f /run/docker /run/containerd /run/xtables.lock
+rm -rf /run/docker /run/containerd /run/xtables.lock
 
 dockerd --rootless --config-file ${PWD}/${DAEMON_JSON}
 EOF
