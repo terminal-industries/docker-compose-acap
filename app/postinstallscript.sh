@@ -56,7 +56,7 @@ cat << EOF >"$ENTRYPOINT_FILE"
 
 PATH="${PWD}:/bin:/usr/bin:%s:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
 
-rm -rf /run/docker /run/containerd /run/xtables.lock
+rm -rf /run/docker /run/containerd
 
 dockerd --rootless --config-file ${PWD}/${DAEMON_JSON}
 EOF
